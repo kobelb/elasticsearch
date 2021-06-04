@@ -186,7 +186,15 @@ public class ReservedRolesStore implements BiConsumer<Set<String>, ActionListene
                                     .indices(ReservedRolesStore.ALERTS_INDEX)
                                     .privileges("all").build()
                         },
-                        null,
+                        new RoleDescriptor.ApplicationResourcePrivileges[] {
+                            RoleDescriptor
+                                .ApplicationResourcePrivileges
+                                .builder()
+                                .application("enterprise_search")
+                                .resources("*")
+                                .privileges("auth")
+                                .build()
+                        },
                         new ConfigurableClusterPrivilege[] { new ManageApplicationPrivileges(Collections.singleton("kibana-*")) },
                         null, MetadataUtils.DEFAULT_RESERVED_METADATA, null))
                 .put("logstash_system", new RoleDescriptor("logstash_system", new String[] { "monitor", MonitoringBulkAction.NAME},
