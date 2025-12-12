@@ -7,14 +7,17 @@
  * License v3.0 only", or the "Server Side Public License, v 1".
  */
 
-module org.elasticsearch.kibana {
-    requires org.elasticsearch.base;
-    requires org.elasticsearch.server;
-    requires org.elasticsearch.security;
-    requires org.elasticsearch.xcore;
-    requires org.elasticsearch.logging;
+package org.elasticsearch.kibana;
 
-    provides org.elasticsearch.xpack.core.security.SecurityExtension
-        with
-            org.elasticsearch.kibana.AlertsDlsSecurityExtension;
+import org.elasticsearch.xpack.core.security.SecurityExtension;
+import org.elasticsearch.xpack.core.security.ext.DlsQueryExtension;
+
+import java.util.List;
+
+public class AlertsDlsSecurityExtension implements SecurityExtension
+{
+    @Override
+    public List<DlsQueryExtension> getDocumentLevelSecurityExtensions(SecurityComponents components) {
+        return List.of(new AlertsDlsQueryExtension(components.client()));
+    }
 }

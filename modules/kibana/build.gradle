@@ -12,8 +12,15 @@ apply plugin: 'elasticsearch.internal-java-rest-test'
 esplugin {
   description = 'Plugin exposing APIs for Kibana system indices'
   classname ='org.elasticsearch.kibana.KibanaPlugin'
+  extendedPlugins = ['x-pack-core', 'x-pack-security']
 }
 
 dependencies {
+  compileOnly(project(':x-pack:plugin:core')) {
+    transitive = false
+  }
+  compileOnly(project(':x-pack:plugin:security')) {
+    transitive = false
+  }
   clusterModules project(':modules:reindex')
 }
