@@ -57,6 +57,7 @@ public class AlertsDlsQueryExtension implements DlsQueryExtension {
 
     @Override
     public DocumentSecurityQuery build(User user, Map<String, Object> config, RequestData data) {
+        this.logger.debug("AlertsDlsQueryExtension::build");
         if (data == null) {
             throw new IllegalStateException("no request data provided");
         }
@@ -83,6 +84,7 @@ public class AlertsDlsQueryExtension implements DlsQueryExtension {
     // to determine the actual spaces that the user is authorized to see the alerts from.
     @Override
     public void precache(Authentication authentication, Role role, ResolvedIndices requestedIndices, ActionListener<RequestData> listener) {
+        this.logger.debug("AlertsDlsQueryExtension::precache");
         if (requestedIndices.getLocal().stream().anyMatch(index -> index.startsWith(INDEX_PREFIX))) {
             var user = authentication.getEffectiveSubject().getUser();
             final GetUserPrivilegesRequestBuilder getUserPrivilegesRequest = new GetUserPrivilegesRequestBuilder(this.client).username(user.principal());
