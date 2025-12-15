@@ -15,7 +15,6 @@ import org.elasticsearch.common.Strings;
 import org.elasticsearch.logging.LogManager;
 import org.elasticsearch.logging.Logger;
 import org.elasticsearch.xpack.core.security.action.user.GetUserPrivilegesRequestBuilder;
-import org.elasticsearch.xpack.core.security.action.user.GetUserPrivilegesResponse;
 import org.elasticsearch.xpack.core.security.action.user.HasPrivilegesAction;
 import org.elasticsearch.xpack.core.security.action.user.HasPrivilegesRequest;
 import org.elasticsearch.xpack.core.security.authc.Authentication;
@@ -87,50 +86,41 @@ public class AlertsDlsQueryExtension implements DlsQueryExtension {
         if (requestedIndices.getLocal().stream().anyMatch(index -> index.startsWith(INDEX_PREFIX))) {
             var user = authentication.getEffectiveSubject().getUser();
             final GetUserPrivilegesRequestBuilder getUserPrivilegesRequest = new GetUserPrivilegesRequestBuilder(this.client).username(user.principal());
-            getUserPrivilegesRequest.execute(new ActionListener<>() {
-                @Override
-                public void onFailure(Exception e) {
-                    listener.onFailure(e);
-                }
+            getUserPrivilegesRequest.execute(listener.delegateFailureAndWrap((l, getUserPrivilegesResponse) -> {
+                final Set<String> resources = getUserPrivilegesResponse.getApplicationPrivileges()
+                    .stream()
+                    .map(RoleDescriptor.ApplicationResourcePrivileges::getResources)
+                    .flatMap(Arrays::stream)
+                    .collect(Collectors.toSet());
 
-                @Override
-                public void onResponse(GetUserPrivilegesResponse getUserPrivilegesResponse) {
-                    final Set<String> resources = getUserPrivilegesResponse.getApplicationPrivileges()
+                final RoleDescriptor.ApplicationResourcePrivileges applicationPrivileges = RoleDescriptor.ApplicationResourcePrivileges.builder()
+                    .application(APP_NAME)
+                    .privileges(READ_PRIVILEGE)
+                    .resources(resources)
+                    .build();
+
+                final HasPrivilegesRequest req = new HasPrivilegesRequest();
+                req.username(user.principal());
+                req.clusterPrivileges(Strings.EMPTY_ARRAY);
+                req.indexPrivileges(new RoleDescriptor.IndicesPrivileges[0]);
+                req.applicationPrivileges(applicationPrivileges);
+                client.execute(HasPrivilegesAction.INSTANCE, req, l.map(response -> {
+                    final List<String> spaces = response.getApplicationPrivileges()
+                        .get(APP_NAME)
                         .stream()
-                        .map(RoleDescriptor.ApplicationResourcePrivileges::getResources)
-                        .flatMap(Arrays::stream)
-                        .collect(Collectors.toSet());
-
-                    final RoleDescriptor.ApplicationResourcePrivileges applicationPrivileges = RoleDescriptor.ApplicationResourcePrivileges.builder()
-                        .application(APP_NAME)
-                        .privileges(READ_PRIVILEGE)
-                        .resources(resources)
-                        .build();
-
-                    final HasPrivilegesRequest req = new HasPrivilegesRequest();
-                    req.username(user.principal());
-                    req.clusterPrivileges(Strings.EMPTY_ARRAY);
-                    req.indexPrivileges(new RoleDescriptor.IndicesPrivileges[0]);
-                    req.applicationPrivileges(applicationPrivileges);
-                    client.execute(HasPrivilegesAction.INSTANCE, req, listener.map(response -> {
-                        final List<String> spaces = response.getApplicationPrivileges()
-                            .get(APP_NAME)
-                            .stream()
-                            .filter(priv -> priv.getPrivileges().get(READ_PRIVILEGE))
-                            .map(ResourcePrivileges::getResource)
-                            .map(resource -> {
-                                Matcher matcher = spaceResourcePattern.matcher(resource);
-                                if (matcher.find()) {
-                                    return matcher.group(1);
-                                }
-                                listener.onFailure(new Exception("Space resource [" + resource + "] did not match [" + spaceResourcePattern.pattern() + "]"));
-                                return null;
-                            })
-                            .toList();
-                        return new RequestData(Map.of(SPACES, spaces));
-                    }));
-                }
-            });
+                        .filter(priv -> priv.getPrivileges().get(READ_PRIVILEGE))
+                        .map(ResourcePrivileges::getResource)
+                        .map(resource -> {
+                            Matcher matcher = spaceResourcePattern.matcher(resource);
+                            if (matcher.find()) {
+                                return matcher.group(1);
+                            }
+                            throw new IllegalStateException("Space resource [" + resource + "] did not match [" + spaceResourcePattern.pattern() + "]");
+                        })
+                        .toList();
+                    return new RequestData(Map.of(SPACES, spaces));
+                }));
+            }));
         } else {
             listener.onResponse(RequestData.EMPTY);
         }
