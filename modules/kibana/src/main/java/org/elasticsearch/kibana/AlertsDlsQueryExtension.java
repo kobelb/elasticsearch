@@ -42,7 +42,7 @@ public class AlertsDlsQueryExtension implements DlsQueryExtension {
     private static final String SPACES = "spaces";
     private static final String INDEX_PREFIX = ".alerts-";
     private static final String APP_NAME = "kibana-.kibana";
-    private static final String READ_PRIVILEGE = "saved_object:alert/find";
+    private static final String READ_PRIVILEGE = "saved_object:alert/find"; //TODO: Replace this with the actual action we want to use
     private final Logger logger = LogManager.getLogger(AlertsDlsQueryExtension.class);
     private final Client client;
 
