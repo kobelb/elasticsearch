@@ -14,6 +14,8 @@ import org.elasticsearch.client.internal.Client;
 import org.elasticsearch.common.Strings;
 import org.elasticsearch.logging.LogManager;
 import org.elasticsearch.logging.Logger;
+import org.elasticsearch.xpack.core.security.action.user.GetUserPrivilegesRequestBuilder;
+import org.elasticsearch.xpack.core.security.action.user.GetUserPrivilegesResponse;
 import org.elasticsearch.xpack.core.security.action.user.HasPrivilegesAction;
 import org.elasticsearch.xpack.core.security.action.user.HasPrivilegesRequest;
 import org.elasticsearch.xpack.core.security.authc.Authentication;
@@ -26,19 +28,23 @@ import org.elasticsearch.xpack.core.security.authz.permission.StaticSecurityQuer
 import org.elasticsearch.xpack.core.security.ext.DlsQueryExtension;
 import org.elasticsearch.xpack.core.security.user.User;
 
+import java.util.Arrays;
 import java.util.Collection;
 import java.util.List;
 import java.util.Map;
+import java.util.Set;
+import java.util.regex.Matcher;
+import java.util.regex.Pattern;
 import java.util.stream.Collectors;
 
 public class AlertsDlsQueryExtension implements DlsQueryExtension {
 
-    private static final String CATEGORIES = "categories";
+    private static final Pattern spaceResourcePattern = Pattern.compile("^space:(.*)");
+    private static final String SPACES = "spaces";
+    private static final String INDEX_PREFIX = ".alerts-";
+    private static final String APP_NAME = "kibana-.kibana";
+    private static final String READ_PRIVILEGE = "saved_object:alert/find";
     private final Logger logger = LogManager.getLogger(AlertsDlsQueryExtension.class);
-
-    private static final String APP_NAME = "kibana";
-    private static final String READ_PRIVILEGE = "category:read";
-
     private final Client client;
 
     public AlertsDlsQueryExtension(Client client) {
@@ -55,43 +61,76 @@ public class AlertsDlsQueryExtension implements DlsQueryExtension {
         if (data == null) {
             throw new IllegalStateException("no request data provided");
         }
-        final Collection<String> categories = data.get(CATEGORIES);
-        if (categories == null) {
-            throw new IllegalStateException("request data does not contain [" + CATEGORIES + "]");
+        final Collection<String> spaces = data.get(SPACES);
+        if (spaces == null) {
+            throw new IllegalStateException("request data does not contain [" + SPACES + "]");
         }
-        if (categories.isEmpty()) {
+        if (spaces.isEmpty()) {
             return StaticSecurityQuery.MATCH_NONE;
         }
 
         final String query = Strings.format("""
-            { "terms": { "category": [  %s ] } }
-            """, categories.stream().map(s -> '"' + s + '"').collect(Collectors.joining(", ")));
+            { "terms": { "kibana.space_ids": [  %s ] } }
+            """, spaces.stream().map(s -> '"' + s + '"').collect(Collectors.joining(", ")));
         logger.info("using DLS query [{}]", query);
         return new StaticSecurityQuery(query);
     }
 
+    // The goal is to determine all spaces where the user is authorized to search alerts.
+    // This can't be done in a single operation because the role definitions tell us the spaces
+    // and then the application privilege definition tell us which privileges are for the alerts.
+    // Therefore, first we will call GET _security/user/_privileges to get all resources,
+    // which happen to be the space, and then we call GET _security/_has_privileges
+    // to determine the actual spaces that the user is authorized to see the alerts from.
     @Override
     public void precache(Authentication authentication, Role role, ResolvedIndices requestedIndices, ActionListener<RequestData> listener) {
-        if (requestedIndices.getLocal().contains(APP_NAME)) {
-            final RoleDescriptor.ApplicationResourcePrivileges privileges = RoleDescriptor.ApplicationResourcePrivileges.builder()
-                .application(APP_NAME)
-                .privileges(READ_PRIVILEGE)
-                .resources("a", "b", "c")
-                .build();
-            final HasPrivilegesRequest req = new HasPrivilegesRequest();
-            req.username(authentication.getEffectiveSubject().getUser().principal());
-            req.clusterPrivileges(Strings.EMPTY_ARRAY);
-            req.indexPrivileges(new RoleDescriptor.IndicesPrivileges[0]);
-            req.applicationPrivileges(privileges);
-            client.execute(HasPrivilegesAction.INSTANCE, req, listener.map(response -> {
-                final List<String> categories = response.getApplicationPrivileges()
-                    .get(APP_NAME)
-                    .stream()
-                    .filter(priv -> priv.getPrivileges().get(READ_PRIVILEGE))
-                    .map(ResourcePrivileges::getResource)
-                    .toList();
-                return new RequestData(Map.of(CATEGORIES, categories));
-            }));
+        if (requestedIndices.getLocal().stream().anyMatch(index -> index.startsWith(INDEX_PREFIX))) {
+            var user = authentication.getEffectiveSubject().getUser();
+            final GetUserPrivilegesRequestBuilder getUserPrivilegesRequest = new GetUserPrivilegesRequestBuilder(this.client).username(user.principal());
+            getUserPrivilegesRequest.execute(new ActionListener<>() {
+                @Override
+                public void onFailure(Exception e) {
+                    listener.onFailure(e);
+                }
+
+                @Override
+                public void onResponse(GetUserPrivilegesResponse getUserPrivilegesResponse) {
+                    final Set<String> resources = getUserPrivilegesResponse.getApplicationPrivileges()
+                        .stream()
+                        .map(RoleDescriptor.ApplicationResourcePrivileges::getResources)
+                        .flatMap(Arrays::stream)
+                        .collect(Collectors.toSet());
+
+                    final RoleDescriptor.ApplicationResourcePrivileges applicationPrivileges = RoleDescriptor.ApplicationResourcePrivileges.builder()
+                        .application(APP_NAME)
+                        .privileges(READ_PRIVILEGE)
+                        .resources(resources)
+                        .build();
+
+                    final HasPrivilegesRequest req = new HasPrivilegesRequest();
+                    req.username(user.principal());
+                    req.clusterPrivileges(Strings.EMPTY_ARRAY);
+                    req.indexPrivileges(new RoleDescriptor.IndicesPrivileges[0]);
+                    req.applicationPrivileges(applicationPrivileges);
+                    client.execute(HasPrivilegesAction.INSTANCE, req, listener.map(response -> {
+                        final List<String> spaces = response.getApplicationPrivileges()
+                            .get(APP_NAME)
+                            .stream()
+                            .filter(priv -> priv.getPrivileges().get(READ_PRIVILEGE))
+                            .map(ResourcePrivileges::getResource)
+                            .map(resource -> {
+                                Matcher matcher = spaceResourcePattern.matcher(resource);
+                                if (matcher.find()) {
+                                    return matcher.group(1);
+                                }
+                                listener.onFailure(new Exception("Space resource [" + resource + "] did not match [" + spaceResourcePattern.pattern() + "]"));
+                                return null;
+                            })
+                            .toList();
+                        return new RequestData(Map.of(SPACES, spaces));
+                    }));
+                }
+            });
         } else {
             listener.onResponse(RequestData.EMPTY);
         }

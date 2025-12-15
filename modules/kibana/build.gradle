@@ -10,6 +10,7 @@ apply plugin: 'elasticsearch.internal-cluster-test'
 apply plugin: 'elasticsearch.internal-java-rest-test'
 
 esplugin {
+  name = 'kibana-plugin'
   description = 'Plugin exposing APIs for Kibana system indices'
   classname ='org.elasticsearch.kibana.KibanaPlugin'
   extendedPlugins = ['x-pack-core', 'x-pack-security']
