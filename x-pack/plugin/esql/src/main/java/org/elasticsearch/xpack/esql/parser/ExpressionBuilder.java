@@ -19,6 +19,7 @@ import org.apache.lucene.util.automaton.TooComplexToDeterminizeException;
 import org.elasticsearch.common.Strings;
 import org.elasticsearch.common.lucene.BytesRefs;
 import org.elasticsearch.common.regex.Regex;
+import org.elasticsearch.xpack.esql.capabilities.ConfigurationAware;
 import org.elasticsearch.xpack.esql.core.InvalidArgumentException;
 import org.elasticsearch.xpack.esql.core.expression.Alias;
 import org.elasticsearch.xpack.esql.core.expression.Attribute;
@@ -67,6 +68,7 @@ import org.elasticsearch.xpack.esql.expression.predicate.operator.comparison.In;
 import org.elasticsearch.xpack.esql.expression.predicate.operator.comparison.InsensitiveEquals;
 import org.elasticsearch.xpack.esql.expression.predicate.operator.comparison.LessThan;
 import org.elasticsearch.xpack.esql.expression.predicate.operator.comparison.LessThanOrEqual;
+import org.elasticsearch.xpack.esql.inference.InferenceSettings;
 import org.elasticsearch.xpack.esql.telemetry.PlanTelemetry;
 import org.elasticsearch.xpack.esql.type.EsqlDataTypeConverter;
 
@@ -124,7 +126,7 @@ public abstract class ExpressionBuilder extends IdentifierBuilder {
 
     protected final ParsingContext context;
 
-    public record ParsingContext(QueryParams params, PlanTelemetry telemetry) {}
+    public record ParsingContext(QueryParams params, PlanTelemetry telemetry, InferenceSettings inferenceSettings) {}
 
     ExpressionBuilder(ParsingContext context) {
         this.context = context;
@@ -607,8 +609,8 @@ public abstract class ExpressionBuilder extends IdentifierBuilder {
             case EsqlBaseParser.ASTERISK -> new Mul(source, left, right);
             case EsqlBaseParser.SLASH -> new Div(source, left, right);
             case EsqlBaseParser.PERCENT -> new Mod(source, left, right);
-            case EsqlBaseParser.PLUS -> new Add(source, left, right);
-            case EsqlBaseParser.MINUS -> new Sub(source, left, right);
+            case EsqlBaseParser.PLUS -> new Add(source, left, right, ConfigurationAware.CONFIGURATION_MARKER);
+            case EsqlBaseParser.MINUS -> new Sub(source, left, right, ConfigurationAware.CONFIGURATION_MARKER);
             default -> throw new ParsingException(source, "Unknown arithmetic operator {}", source.text());
         };
     }
