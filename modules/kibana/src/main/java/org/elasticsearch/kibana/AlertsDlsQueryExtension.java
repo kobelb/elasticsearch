@@ -12,40 +12,31 @@ package org.elasticsearch.kibana;
 import org.elasticsearch.action.ActionListener;
 import org.elasticsearch.client.internal.Client;
 import org.elasticsearch.common.Strings;
-import org.elasticsearch.common.util.set.Sets;
 import org.elasticsearch.logging.LogManager;
 import org.elasticsearch.logging.Logger;
-import org.elasticsearch.xpack.core.security.action.user.GetUserPrivilegesRequestBuilder;
-import org.elasticsearch.xpack.core.security.action.user.HasPrivilegesAction;
-import org.elasticsearch.xpack.core.security.action.user.HasPrivilegesRequest;
 import org.elasticsearch.xpack.core.security.authc.Authentication;
 import org.elasticsearch.xpack.core.security.authz.ResolvedIndices;
-import org.elasticsearch.xpack.core.security.authz.RoleDescriptor;
 import org.elasticsearch.xpack.core.security.authz.permission.DocumentSecurityQuery;
-import org.elasticsearch.xpack.core.security.authz.permission.ResourcePrivileges;
 import org.elasticsearch.xpack.core.security.authz.permission.Role;
 import org.elasticsearch.xpack.core.security.authz.permission.StaticSecurityQuery;
 import org.elasticsearch.xpack.core.security.authz.privilege.ApplicationPrivilege;
-import org.elasticsearch.xpack.core.security.authz.privilege.ApplicationPrivilegeDescriptor;
 import org.elasticsearch.xpack.core.security.ext.DlsQueryExtension;
 import org.elasticsearch.xpack.core.security.user.User;
 
-import java.util.Arrays;
 import java.util.Collection;
 import java.util.Collections;
-import java.util.List;
 import java.util.Map;
-import java.util.Set;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
 import java.util.stream.Collectors;
+
+import static org.elasticsearch.kibana.KibanaPlugin.KIBANA_APPLICATION_PRIVILEGE;
 
 public class AlertsDlsQueryExtension implements DlsQueryExtension {
 
     private static final Pattern spaceResourcePattern = Pattern.compile("^space:(.*)");
     private static final String SPACES = "spaces";
     private static final String INDEX_PREFIX = ".alerts-";
-    private static final String APP_NAME = "kibana-.kibana";
     private static final String READ_PRIVILEGE = "saved_object:alert/find"; //TODO: Replace this with the actual action we want to use
     private final Logger logger = LogManager.getLogger(AlertsDlsQueryExtension.class);
     private final Client client;
@@ -88,7 +79,7 @@ public class AlertsDlsQueryExtension implements DlsQueryExtension {
     public void precache(Authentication authentication, Role role, ResolvedIndices requestedIndices, ActionListener<RequestData> listener) {
         this.logger.debug("AlertsDlsQueryExtension::precache");
         if (requestedIndices.getLocal().stream().anyMatch(index -> index.startsWith(INDEX_PREFIX))) {
-            var resources = role.application().getResourcePatterns(new ApplicationPrivilege(APP_NAME, Collections.emptySet(), READ_PRIVILEGE));
+            var resources = role.application().getResourcePatterns(new ApplicationPrivilege(KIBANA_APPLICATION_PRIVILEGE, Collections.emptySet(), READ_PRIVILEGE));
             var spaces = resources.stream().map(resource -> {
                 if (resource.equals("*")) {
                     return "*";

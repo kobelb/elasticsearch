@@ -16,5 +16,5 @@ module org.elasticsearch.kibana {
 
     provides org.elasticsearch.xpack.core.security.SecurityExtension
         with
-            org.elasticsearch.kibana.AlertsDlsSecurityExtension;
+            org.elasticsearch.kibana.AlertsSecurityExtension;
 }

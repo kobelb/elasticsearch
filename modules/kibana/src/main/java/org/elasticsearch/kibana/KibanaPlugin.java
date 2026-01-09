@@ -22,6 +22,8 @@ public class KibanaPlugin extends Plugin implements SystemIndexPlugin {
 
     private static final List<String> KIBANA_PRODUCT_ORIGIN = List.of("kibana");
 
+    static final String KIBANA_APPLICATION_PRIVILEGE = "kibana-.kibana";
+
     public static final SystemIndexDescriptor KIBANA_INDEX_DESCRIPTOR = SystemIndexDescriptor.builder()
         .setIndexPattern(".kibana_*")
         .setDescription("Kibana saved objects system index")
