@@ -6,6 +6,7 @@
  */
 package org.elasticsearch.xpack.esql.view;
 
+import org.elasticsearch.ElasticsearchSecurityException;
 import org.elasticsearch.action.ActionListener;
 import org.elasticsearch.action.support.ActionFilters;
 import org.elasticsearch.action.support.master.AcknowledgedResponse;
@@ -17,9 +18,11 @@ import org.elasticsearch.cluster.project.ProjectResolver;
 import org.elasticsearch.cluster.service.ClusterService;
 import org.elasticsearch.common.util.concurrent.EsExecutors;
 import org.elasticsearch.injection.guice.Inject;
+import org.elasticsearch.rest.RestStatus;
 import org.elasticsearch.tasks.Task;
 import org.elasticsearch.threadpool.ThreadPool;
 import org.elasticsearch.transport.TransportService;
+import org.elasticsearch.xpack.core.security.operator.OperatorPrivilegesUtil;
 
 public class TransportPutViewAction extends AcknowledgedTransportMasterNodeProjectAction<PutViewAction.Request> {
     private final ViewService viewService;
@@ -53,6 +56,15 @@ public class TransportPutViewAction extends AcknowledgedTransportMasterNodeProje
         ProjectState state,
         ActionListener<AcknowledgedResponse> listener
     ) {
+        if (request.view().allowRestrictedIndices() && OperatorPrivilegesUtil.isOperator(threadPool.getThreadContext()) == false) {
+            listener.onFailure(
+                new ElasticsearchSecurityException(
+                    "setting [allow_restricted_indices] on a view requires operator privileges",
+                    RestStatus.FORBIDDEN
+                )
+            );
+            return;
+        }
         viewService.putView(state.projectId(), request, listener);
     }
 

@@ -115,9 +115,11 @@ public class ViewResolver {
     }
 
     /**
-     * Result of view resolution containing both the rewritten plan and the view queries.
+     * Result of view resolution containing the rewritten plan, the view queries, and the set of
+     * index patterns that should bypass the system-index access gate during field-caps resolution.
+     * The bypass set is populated from views whose {@link View#allowRestrictedIndices()} flag is set.
      */
-    public record ViewResolutionResult(LogicalPlan plan, Map<String, String> viewQueries) {}
+    public record ViewResolutionResult(LogicalPlan plan, Map<String, String> viewQueries, Set<String> systemIndexBypassPatterns) {}
 
     /**
      * Replaces views in the logical plan with their subqueries recursively.
@@ -146,8 +148,9 @@ public class ViewResolver {
         ActionListener<ViewResolutionResult> listener
     ) {
         Map<String, String> viewQueries = new HashMap<>();
+        Set<String> systemIndexBypassPatterns = new HashSet<>();
         if (viewsFeatureEnabled() == false || getMetadata().views().isEmpty()) {
-            listener.onResponse(new ViewResolutionResult(plan, viewQueries));
+            listener.onResponse(new ViewResolutionResult(plan, viewQueries, systemIndexBypassPatterns));
             return;
         }
         // Note: this returns the uncompacted nested plan. Compaction (UnionAll/ViewUnionAll
@@ -159,16 +162,19 @@ public class ViewResolver {
         // esql-planning #543, #472.
         doResolveOriginViews(projectRouting, listener.delegateFailureAndWrap((l1, originResolution) -> {
             if (originResolution.resolveLocalViews() == false) {
-                l1.onResponse(new ViewResolutionResult(plan, viewQueries));
+                l1.onResponse(new ViewResolutionResult(plan, viewQueries, systemIndexBypassPatterns));
             } else {
                 replaceViews(
                     plan,
                     parser,
                     new LinkedHashSet<>(),
                     viewQueries,
+                    systemIndexBypassPatterns,
                     0,
                     originResolution.originProjectAlias(),
-                    l1.delegateFailureAndWrap((l2, rewritten) -> l2.onResponse(new ViewResolutionResult(rewritten, viewQueries)))
+                    l1.delegateFailureAndWrap(
+                        (l2, rewritten) -> l2.onResponse(new ViewResolutionResult(rewritten, viewQueries, systemIndexBypassPatterns))
+                    )
                 );
             }
         }));
@@ -179,6 +185,7 @@ public class ViewResolver {
         BiFunction<String, String, LogicalPlan> parser,
         LinkedHashSet<String> seenViews,
         Map<String, String> viewQueries,
+        Set<String> systemIndexBypassPatterns,
         int depth,
         @Nullable String originProjectAlias,
         ActionListener<LogicalPlan> listener
@@ -209,6 +216,7 @@ public class ViewResolver {
                     parser,
                     seenInner,
                     viewQueries,
+                    systemIndexBypassPatterns,
                     depth,
                     originProjectAlias,
                     planListener.delegateFailureAndWrap((l, result) -> {
@@ -223,6 +231,7 @@ public class ViewResolver {
                     seenInner,
                     seenWildcards,
                     viewQueries,
+                    systemIndexBypassPatterns,
                     depth,
                     originProjectAlias,
                     planListener.delegateFailureAndWrap((l, result) -> {
@@ -243,6 +252,7 @@ public class ViewResolver {
         BiFunction<String, String, LogicalPlan> parser,
         LinkedHashSet<String> seenViews,
         Map<String, String> viewQueries,
+        Set<String> systemIndexBypassPatterns,
         int depth,
         @Nullable String originProjectAlias,
         ActionListener<LogicalPlan> listener
@@ -258,6 +268,7 @@ public class ViewResolver {
                     parser,
                     seenViews,
                     viewQueries,
+                    systemIndexBypassPatterns,
                     depth + 1,
                     originProjectAlias,
                     l.delegateFailureAndWrap((subListener, newPlan) -> {
@@ -292,6 +303,7 @@ public class ViewResolver {
         LinkedHashSet<String> seenViews,
         HashSet<String> seenWildcards,
         Map<String, String> viewQueries,
+        Set<String> systemIndexBypassPatterns,
         int depth,
         @Nullable String originProjectAlias,
         ActionListener<LogicalPlan> listener
@@ -371,9 +383,18 @@ public class ViewResolver {
                         parser,
                         branchSeenViews,
                         viewQueries,
+                        systemIndexBypassPatterns,
                         depth + 1,
                         originProjectAlias,
                         l2.delegateFailureAndWrap((l3, fullyResolved) -> {
+                            if (view.allowRestrictedIndices()) {
+                                // Collect all index patterns from the fully-resolved view body so that
+                                // field-caps for those patterns bypasses the system-index access gate.
+                                fullyResolved.forEachUp(
+                                    UnresolvedRelation.class,
+                                    ur -> systemIndexBypassPatterns.add(ur.indexPattern().indexPattern())
+                                );
+                            }
                             ViewPlan viewPlan = new ViewPlan(view.name(), fullyResolved);
                             resolvedViews.put(view.name(), viewPlan);
                             l3.onResponse(null);

@@ -8,15 +8,19 @@
  */
 package org.elasticsearch.cluster.metadata;
 
+import org.elasticsearch.common.io.stream.BytesStreamOutput;
 import org.elasticsearch.common.io.stream.Writeable;
 import org.elasticsearch.test.AbstractXContentSerializingTestCase;
+import org.elasticsearch.test.TransportVersionUtils;
 import org.elasticsearch.xcontent.XContentParser;
 
 import java.io.IOException;
 
+import static org.elasticsearch.cluster.metadata.View.VIEW_ALLOW_RESTRICTED_INDICES;
 import static org.elasticsearch.cluster.metadata.ViewTestsUtils.randomName;
 import static org.elasticsearch.cluster.metadata.ViewTestsUtils.randomView;
 import static org.hamcrest.Matchers.equalTo;
+import static org.hamcrest.Matchers.is;
 
 public class ViewTests extends AbstractXContentSerializingTestCase<View> {
 
@@ -48,5 +52,27 @@ public class ViewTests extends AbstractXContentSerializingTestCase<View> {
 
     public static void assertEqualViews(View expectedInstance, View newInstance) {
         assertThat(newInstance.query(), equalTo(expectedInstance.query()));
+        assertThat(newInstance.allowRestrictedIndices(), equalTo(expectedInstance.allowRestrictedIndices()));
+    }
+
+    public void testSerializationRoundTripAllowRestrictedIndices() throws IOException {
+        View view = new View(randomName(), "FROM test", true);
+        BytesStreamOutput out = new BytesStreamOutput();
+        view.writeTo(out);
+        View read = new View(out.bytes().streamInput());
+        assertThat(read.allowRestrictedIndices(), is(true));
+    }
+
+    public void testSerializationBwcAllowRestrictedIndicesDefaultsFalse() throws IOException {
+        View view = new View(randomName(), "FROM test", true);
+        BytesStreamOutput out = new BytesStreamOutput();
+        var oldVersion = TransportVersionUtils.randomVersionNotSupporting(VIEW_ALLOW_RESTRICTED_INDICES);
+        out.setTransportVersion(oldVersion);
+        view.writeTo(out);
+
+        var in = out.bytes().streamInput();
+        in.setTransportVersion(oldVersion);
+        View read = new View(in);
+        assertThat(read.allowRestrictedIndices(), is(false));
     }
 }

@@ -394,6 +394,7 @@ public class EsqlSession {
             finalConfiguration,
             executionInfo,
             request.filter(),
+            viewResolution.systemIndexBypassPatterns(),
             new EsqlCCSUtils.CssPartialErrorsActionListener(finalConfiguration, executionInfo, listener) {
                 @Override
                 public void onResponse(Versioned<LogicalPlan> analyzedPlan) {
@@ -1012,6 +1013,7 @@ public class EsqlSession {
         Configuration configuration,
         EsqlExecutionInfo executionInfo,
         QueryBuilder requestFilter,
+        Set<String> systemIndexBypassPatterns,
         ActionListener<Versioned<LogicalPlan>> logicalPlanListener
     ) {
         assert ThreadPool.assertCurrentThreadPool(ThreadPool.Names.SEARCH);
@@ -1053,6 +1055,7 @@ public class EsqlSession {
             timestampBounds,
             preAnalysis,
             result,
+            systemIndexBypassPatterns,
             logicalPlanListener
         );
     }
@@ -1067,6 +1070,7 @@ public class EsqlSession {
         TimestampBounds timestampBounds,
         PreAnalyzer.PreAnalysis preAnalysis,
         PreAnalysisResult result,
+        Set<String> systemIndexBypassPatterns,
         ActionListener<Versioned<LogicalPlan>> logicalPlanListener
     ) {
         executionInfo.queryProfile().indicesResolutionMarker().start();
@@ -1074,7 +1078,16 @@ public class EsqlSession {
         // solution would be to just not track the unmapped indices at all, but that requires a more structural change.
         boolean trackedUnmappedFieldIndices = unmappedResolution == UnmappedResolution.LOAD || parsed.anyMatch(p -> p instanceof Insist);
         SubscribableListener.<PreAnalysisResult>newForked(
-            l -> preAnalyzeMainIndices(preAnalysis, configuration, executionInfo, trackedUnmappedFieldIndices, result, requestFilter, l)
+            l -> preAnalyzeMainIndices(
+                preAnalysis,
+                configuration,
+                executionInfo,
+                trackedUnmappedFieldIndices,
+                result,
+                requestFilter,
+                systemIndexBypassPatterns,
+                l
+            )
         ).andThenApply(r -> {
             if (r.indexResolution.isEmpty() == false // Rule out ROW case with no FROM clauses
                 && executionInfo.isCrossClusterSearch()
@@ -1159,6 +1172,7 @@ public class EsqlSession {
                     timestampBounds,
                     preAnalysis,
                     r,
+                    systemIndexBypassPatterns,
                     l
                 );
             })
@@ -1458,6 +1472,7 @@ public class EsqlSession {
         boolean trackUnmappedFieldIndices,
         PreAnalysisResult result,
         QueryBuilder requestFilter,
+        Set<String> systemIndexBypassPatterns,
         ActionListener<PreAnalysisResult> listener
     ) {
         assert ThreadPool.assertCurrentThreadPool(
@@ -1485,6 +1500,7 @@ public class EsqlSession {
                     trackUnmappedFieldIndices,
                     r,
                     requestFilter,
+                    systemIndexBypassPatterns,
                     l
                 ),
                 listener
@@ -1537,18 +1553,21 @@ public class EsqlSession {
         boolean trackUnmappedFieldIndices,
         PreAnalysisResult result,
         QueryBuilder requestFilter,
+        Set<String> systemIndexBypassPatterns,
         ActionListener<PreAnalysisResult> listener
     ) {
         if (executionInfo.clusterAliases().isEmpty()) {
             // return empty resolution if the expression is pure CCS and resolved no remote clusters (like no-such-cluster*:index)
             listener.onResponse(result.withIndices(indexPattern, IndexResolution.empty(indexPattern.indexPattern())));
         } else {
+            boolean systemIndexBypass = systemIndexBypassPatterns.contains(indexPattern.indexPattern());
             executionInfo.queryProfile().incFieldCapsCalls();
             indexResolver.resolveMainIndicesVersioned(
                 indexPattern.indexPattern(),
                 result.fieldNames,
                 createQueryFilter(indexMode, requestFilter),
                 indexMode == IndexMode.TIME_SERIES,
+                systemIndexBypass,
                 // TODO: In case of subqueries, the different main index resolutions don't know about each other's minimum version.
                 // This is bad because `FROM (FROM remote1:*) (FROM remote2:*)` can have different minimum versions
                 // while resolving each subquery's main index pattern. We'll determine the correct overall minimum transport version
@@ -1574,6 +1593,7 @@ public class EsqlSession {
                             result.fieldNames,
                             requestFilter,
                             false,
+                            systemIndexBypass,
                             indexResolution.minimumVersion(),
                             preAnalysis.useAggregateMetricDoubleWhenNotSupported(),
                             preAnalysis.useDenseVectorWhenNotSupported(),
@@ -1750,6 +1770,7 @@ public class EsqlSession {
         TimestampBounds timestampBounds,
         PreAnalyzer.PreAnalysis preAnalysis,
         PreAnalysisResult result,
+        Set<String> systemIndexBypassPatterns,
         ActionListener<Versioned<LogicalPlan>> listener
     ) {
         LOGGER.debug("Analyzing the plan ({})", description);
@@ -1789,6 +1810,7 @@ public class EsqlSession {
                     timestampBounds,
                     preAnalysis,
                     result,
+                    systemIndexBypassPatterns,
                     listener
                 );
             }

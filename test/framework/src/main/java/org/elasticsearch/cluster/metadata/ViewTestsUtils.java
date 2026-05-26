@@ -12,6 +12,7 @@ package org.elasticsearch.cluster.metadata;
 import java.util.Locale;
 
 import static org.elasticsearch.test.ESTestCase.randomAlphaOfLength;
+import static org.elasticsearch.test.ESTestCase.randomBoolean;
 
 public class ViewTestsUtils {
     public static String randomName() {
@@ -20,6 +21,6 @@ public class ViewTestsUtils {
 
     public static View randomView(String name) {
         String query = "FROM " + randomAlphaOfLength(10);
-        return new View(name, query);
+        return new View(name, query, randomBoolean());
     }
 }

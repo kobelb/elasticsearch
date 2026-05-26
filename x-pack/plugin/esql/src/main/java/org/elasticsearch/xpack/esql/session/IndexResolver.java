@@ -19,12 +19,14 @@ import org.elasticsearch.action.support.IndicesOptions.CrossProjectModeOptions;
 import org.elasticsearch.client.internal.Client;
 import org.elasticsearch.common.Strings;
 import org.elasticsearch.common.util.Maps;
+import org.elasticsearch.common.util.concurrent.ThreadContext;
 import org.elasticsearch.core.Nullable;
 import org.elasticsearch.index.IndexMode;
 import org.elasticsearch.index.IndexNotFoundException;
 import org.elasticsearch.index.mapper.TimeSeriesParams;
 import org.elasticsearch.index.query.QueryBuilder;
 import org.elasticsearch.indices.IndicesExpressionGrouper;
+import org.elasticsearch.indices.SystemIndices;
 import org.elasticsearch.logging.LogManager;
 import org.elasticsearch.logging.Logger;
 import org.elasticsearch.threadpool.ThreadPool;
@@ -154,6 +156,7 @@ public class IndexResolver {
         Set<String> fieldNames,
         QueryBuilder requestFilter,
         boolean includeAllDimensions,
+        boolean systemIndexBypass,
         TransportVersion minimumVersion,
         boolean useAggregateMetricDoubleWhenNotSupported,
         boolean useDenseVectorWhenNotSupported,
@@ -162,8 +165,48 @@ public class IndexResolver {
         IndicesExpressionGrouper indicesExpressionGrouper,
         ActionListener<Versioned<IndexResolution>> listener
     ) {
+        FieldCapabilitiesRequest request = createFieldCapsRequest(
+            DEFAULT_OPTIONS,
+            indexPattern,
+            null,
+            fieldNames,
+            requestFilter,
+            includeAllDimensions,
+            false
+        );
+        if (systemIndexBypass) {
+            ThreadContext threadContext = client.threadPool().getThreadContext();
+            try (ThreadContext.StoredContext ignored = threadContext.newStoredContext()) {
+                if (threadContext.getHeader(SystemIndices.SYSTEM_INDEX_ACCESS_CONTROL_HEADER_KEY) == null) {
+                    threadContext.putHeader(SystemIndices.SYSTEM_INDEX_ACCESS_CONTROL_HEADER_KEY, Boolean.TRUE.toString());
+                }
+                if (threadContext.getHeader(SystemIndices.EXTERNAL_SYSTEM_INDEX_ACCESS_CONTROL_HEADER_KEY) == null) {
+                    threadContext.putHeader(SystemIndices.EXTERNAL_SYSTEM_INDEX_ACCESS_CONTROL_HEADER_KEY, "kibana-view");
+                }
+                doResolveIndices(
+                    request,
+                    indexPattern,
+                    true,
+                    minimumVersion,
+                    useAggregateMetricDoubleWhenNotSupported,
+                    useDenseVectorWhenNotSupported,
+                    hasTimeSeriesAggregation,
+                    trackUnmappedFieldIndices,
+                    (indexPattern1, fieldCapabilitiesResponse) -> Maps.transformValues(
+                        indicesExpressionGrouper.groupIndices(
+                            IndicesOptions.DEFAULT,
+                            Strings.splitStringByCommaToArray(indexPattern1),
+                            false
+                        ),
+                        v -> List.of(v.indices())
+                    ),
+                    listener
+                );
+                return;
+            }
+        }
         doResolveIndices(
-            createFieldCapsRequest(DEFAULT_OPTIONS, indexPattern, null, fieldNames, requestFilter, includeAllDimensions, false),
+            request,
             indexPattern,
             true, /* allow empty index resolution when resolving main pattern */
             minimumVersion,
